@@ -7,55 +7,18 @@ import { execSync } from "child_process";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// 날짜 포맷
+// 날짜
 const today = new Date();
 const yyyy = today.getFullYear();
 const mm = String(today.getMonth() + 1).padStart(2, "0");
 const dd = String(today.getDate()).padStart(2, "0");
 const filename = `${yyyy}-${mm}-${dd}.md`;
 
-// 경로 설정
+// 경로
 const folderPath = path.join(__dirname, "..", "docs", "daily-log");
 const filePath = path.join(folderPath, filename);
 
-// prefix
-const prefixMap = {
-  "✨": "feat",
-  "♻️": "refactor",
-  "🐛": "fix",
-  "📝": "docs",
-  "🚀": "deploy",
-  "🔥": "remove",
-  "🔧": "config",
-  "✅": "test",
-  "🎨": "style",
-  "🔀": "merge",
-  "feat:": "feat",
-  "fix:": "fix",
-  "refactor:": "refactor",
-  "docs:": "docs",
-  "test:": "test",
-  "style:": "style",
-  "chore:": "chore",
-  "config:": "config",
-};
-
-// 이모지 선택택
-const reverseEmojiMap = {
-  feat: "✨",
-  refactor: "♻️",
-  fix: "🐛",
-  docs: "📝",
-  deploy: "🚀",
-  remove: "🔥",
-  config: "🔧",
-  test: "✅",
-  style: "🎨",
-  merge: "🔀",
-  chore: "🧹",
-};
-
-// 커밋메세지 가져와서 h3 만들기
+// 커밋 메시지
 function getTodayCommits() {
   const since = `${yyyy}-${mm}-${dd}T00:00:00`;
   const until = `${yyyy}-${mm}-${dd}T23:59:59`;
@@ -73,13 +36,17 @@ function getTodayCommits() {
 
     const grouped = {};
     messages.forEach((msg) => {
-      const match = msg.match(/^([^\s:]+[:]?|[^\s]+)\s(.+)/);
+      const match = msg.match(
+        /^(\p{Emoji_Presentation}|\p{Emoji}\ufe0f?)\s(.+)$/u
+      );
       if (match) {
-        let [_, rawPrefix, content] = match;
-        const normalizedPrefix = prefixMap[rawPrefix] || "기타";
-
-        if (!grouped[normalizedPrefix]) grouped[normalizedPrefix] = [];
-        grouped[normalizedPrefix].push(content.trim());
+        const [, prefix, content] = match;
+        if (!grouped[prefix]) grouped[prefix] = [];
+        grouped[prefix].push(content.trim());
+      } else {
+        // 매칭 안 되는 것들은 "기타"로 처리
+        if (!grouped["기타"]) grouped["기타"] = [];
+        grouped["기타"].push(msg.trim());
       }
     });
 
@@ -92,39 +59,73 @@ function getTodayCommits() {
   }
 }
 
-// 📝 템플릿
-const { fullList, grouped } = getTodayCommits();
+// groupedSummary (prefix별 분류)
+function generateGroupedSummary(grouped) {
+  let summary = "";
+  Object.entries(grouped).forEach(([prefix, items]) => {
+    const title =
+      {
+        "✨": "feat",
+        "♻️": "refactor",
+        "🐛": "fix",
+        "📝": "docs",
+        "🚀": "deploy",
+        "🔥": "remove",
+        "🔧": "config",
+        "✅": "test",
+        "🎨": "style",
+        "🔀": "merge",
+        "🧹": "chore",
+      }[prefix] || "기타";
 
-let groupedSummary = "";
-Object.entries(grouped).forEach(([normalizedPrefix, items]) => {
-  const emoji = reverseEmojiMap[normalizedPrefix] || "📦";
-  groupedSummary += `\n### ${emoji} ${normalizedPrefix}\n`;
-  groupedSummary += items.map((item) => `- ${item}`).join("\n") + "\n";
-});
+    summary += `\n### ${prefix} ${title}\n`;
+    summary += items.map((item) => `- ${item}`).join("\n") + "\n";
+  });
 
-const template = `# 🌟 ${yyyy}-${mm}-${dd} 커밋 로그
+  return summary.trim();
+}
 
-## 📌 주요 작업 내용
+// 템플릿
+function generateTemplate(fullList, groupedSummary) {
+  return `# 🌟 ${yyyy}-${mm}-${dd} 커밋 내역
+
+### 📌 주요 작업 내용
 - 
 
-## 🔧 커밋 내역
+### 🔧 커밋 내역
 \`\`\`bash
 ${fullList}
 \`\`\`
 
-${groupedSummary.trim()}
+---
 
-## 💬 고민 & 메모
+${groupedSummary}
+
+### 💬 고민 & 메모
 - 
 `;
+}
 
-// 📂 디렉토리 및 파일 생성
+// 📂 이미 만들어진 로그 업데이트
+const { fullList, grouped } = getTodayCommits();
+const groupedSummary = generateGroupedSummary(grouped);
+const template = generateTemplate(fullList, groupedSummary);
+
 if (!fs.existsSync(folderPath)) {
   fs.mkdirSync(folderPath, { recursive: true });
 }
 
 if (fs.existsSync(filePath)) {
-  console.log("⚠️ 이미 오늘의 로그가 존재합니다:", filePath);
+  const existing = fs.readFileSync(filePath, "utf-8");
+
+  // 🔧 커밋 내역 ~ 💬 고민 & 메모 이전까지 대체 (업데이트 함)
+  const updated = existing.replace(
+    /### 🔧 커밋 내역[\s\S]*?(?=### 💬 고민 & 메모)/,
+    `### 🔧 커밋 내역\n\`\`\`bash\n${fullList}\n\`\`\`\n\n---\n\n${groupedSummary}\n\n`
+  );
+
+  fs.writeFileSync(filePath, updated);
+  console.log("♻️ 기존 로그 파일을 업데이트했습니다:", filePath);
 } else {
   fs.writeFileSync(filePath, template);
   console.log("✅ 오늘의 로그 파일이 생성되었습니다:", filePath);
